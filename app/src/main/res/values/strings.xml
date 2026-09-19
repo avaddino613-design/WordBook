@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Wordbook</string>
+    <string name="widget_description">A word from your list, on your home screen.</string>
+    <string name="shuffle">Show another word</string>
+</resources>

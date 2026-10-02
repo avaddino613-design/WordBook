@@ -7,6 +7,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.webkit.JavascriptInterface
+import android.speech.tts.TextToSpeech
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -14,11 +15,14 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.core.view.WindowCompat
 import androidx.webkit.WebViewAssetLoader
+import java.util.Locale
 
 class MainActivity : Activity() {
 
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,6 +72,16 @@ class MainActivity : Activity() {
 
         web.addJavascriptInterface(NativeBridge(this), "WordbookNative")
         web.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+
+        // Backs the speaker button for words with no recorded pronunciation audio.
+        tts = TextToSpeech(this) { status ->
+            ttsReady = status == TextToSpeech.SUCCESS
+            if (ttsReady) tts?.language = Locale.US
+        }
+    }
+
+    fun speak(text: String) {
+        if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "wordbook")
     }
 
     fun applyBars(color: Int, light: Boolean) {
@@ -93,6 +107,13 @@ class MainActivity : Activity() {
     override fun onPause() {
         web.onPause()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        super.onDestroy()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -123,6 +144,11 @@ class NativeBridge(private val activity: MainActivity) {
 
     @JavascriptInterface
     fun isNight(): Boolean = activity.isNight()
+
+    @JavascriptInterface
+    fun speak(text: String) {
+        activity.runOnUiThread { activity.speak(text) }
+    }
 
     @JavascriptInterface
     fun setBars(color: String, light: Boolean) {

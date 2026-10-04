@@ -84,13 +84,6 @@ textarea{font-family:var(--serif);font-size:18px;line-height:1.4;resize:vertical
 .card-pos{margin:10px 0 0;font:italic 400 20px/1.3 var(--serif);color:var(--pos)}
 .hear-row{display:flex;align-items:center;gap:12px}
 .hear-row .hear-label{color:var(--muted);font-size:14px}
-.lookup-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.lookup-status{color:var(--muted);font-size:14px}
-.lookup-results{margin-top:12px;display:flex;flex-direction:column;gap:8px;max-height:220px;overflow:auto}
-.lookup-item{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:11px 13px;border:1.5px solid var(--line);border-radius:12px;background:var(--surface);text-align:left;cursor:pointer}
-.lookup-item[aria-pressed="true"]{border-color:var(--pos)}
-.lookup-pos{font:italic 400 13px var(--serif);color:var(--pos)}
-.lookup-meaning{font:400 15px/1.4 var(--serif);color:var(--text)}
 .card-detail{margin-top:22px}
 .card-meaning{margin:0;max-width:34em;font:400 var(--meaning)/1.5 var(--serif)}
 .card-meaning.none{color:var(--muted);font-style:italic}
@@ -309,13 +302,6 @@ dialog[open]{animation:sheet .22s ease-out}
     <div class="field">
       <label for="f-word">Word</label>
       <input id="f-word" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="60">
-    </div>
-    <div class="field">
-      <div class="lookup-row">
-        <button class="btn" id="lookup-btn" type="button">Look up</button>
-        <span class="lookup-status" id="lookup-status"></span>
-      </div>
-      <div class="lookup-results" id="lookup-results" hidden></div>
     </div>
     <div class="field">
       <span class="lbl" id="pos-label">Part of speech</span>
@@ -725,98 +711,6 @@ const dlg = $('#editor');
 const form = $('#editor-form');
 let editingId = null;
 let pendingAudio = '';
-let lookupSeq = 0;
-
-// Accounts for the one API part-of-speech name that doesn't match our chip set.
-function normalizePos(p){ return p === 'exclamation' ? 'interjection' : p; }
-
-function renderCandidates(list){
-  const box = $('#lookup-results');
-  box.hidden = list.length < 2;
-  box.replaceChildren(...list.map(c => {
-    const b = el('button', 'lookup-item');
-    b.type = 'button';
-    b.append(el('span', 'lookup-pos', c.pos || 'meaning'), el('span', 'lookup-meaning', c.meaning));
-    b.onclick = () => {
-      applyCandidate(c);
-      document.querySelectorAll('.lookup-item').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-    };
-    return b;
-  }));
-  if (list.length) box.firstChild.setAttribute('aria-pressed', 'true');
-}
-
-function applyCandidate(c){
-  const pos = normalizePos(c.pos);
-  document.querySelectorAll('#chips input').forEach(i => { i.checked = i.value === pos; });
-  $('#f-meaning').value = c.meaning || '';
-  $('#f-example').value = c.example || '';
-}
-
-// Runs a dictionary lookup. Inside the Android app this hands off to native code
-// (NativeBridge.lookupWord), since a plain browser fetch() from the WebView's page
-// can be blocked by cross-origin rules that a native HTTP request never hits.
-// Outside the app (a plain browser, or a webtoapp-style wrapper) it uses fetch().
-let pendingNativeLookup = null;
-window.onNativeLookupResult = function (status, body) {
-  const resolve = pendingNativeLookup;
-  pendingNativeLookup = null;
-  if (resolve) resolve({ status: Number(status), body });
-};
-
-async function fetchDictionary(word){
-  if (window.WordbookNative && WordbookNative.lookupWord) {
-    const r = await new Promise(resolve => {
-      pendingNativeLookup = resolve;
-      WordbookNative.lookupWord(word);
-    });
-    if (r.status === 404) { const e = new Error('not found'); e.notFound = true; throw e; }
-    if (r.status < 200 || r.status >= 300) throw new Error('transport');
-    return JSON.parse(r.body);
-  }
-  const res = await fetch('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word));
-  if (res.status === 404) { const e = new Error('not found'); e.notFound = true; throw e; }
-  if (!res.ok) throw new Error('transport');
-  return await res.json();
-}
-
-async function performLookup(){
-  const word = $('#f-word').value.trim();
-  if (!word) { editorError('Type the word first.'); return; }
-  editorError('');
-  const seq = ++lookupSeq;
-  $('#lookup-status').textContent = 'Looking up\u2026';
-  $('#lookup-results').hidden = true;
-  $('#lookup-results').replaceChildren();
-  try {
-    const data = await fetchDictionary(word.toLowerCase());
-    if (seq !== lookupSeq) return;
-
-    let audio = '';
-    const candidates = [];
-    data.forEach(entryItem => {
-      if (!audio) audio = (entryItem.phonetics || []).map(p => p.audio).find(a => a && a.trim()) || '';
-      (entryItem.meanings || []).forEach(m => {
-        const defs = m.definitions || [];
-        const withEx = defs.find(d => d.example);
-        const d = withEx || defs[0];
-        if (d) candidates.push({ pos: m.partOfSpeech || '', meaning: d.definition || '', example: d.example || '' });
-      });
-    });
-
-    if (!candidates.length) { $('#lookup-status').textContent = 'No results. You can fill it in yourself.'; return; }
-    pendingAudio = audio;
-    $('#lookup-status').textContent = candidates.length > 1
-      ? 'Pick the meaning that fits:'
-      : (audio ? 'Found it, with audio.' : 'Found it.');
-    renderCandidates(candidates);
-    applyCandidate(candidates[0]);
-  } catch (e) {
-    if (seq !== lookupSeq) return;
-    if (e && e.notFound) { $('#lookup-status').textContent = 'No results. You can fill it in yourself.'; }
-    else { $('#lookup-status').textContent = 'Could not reach the dictionary. Check your connection.'; }
-  }
-}
 
 $('#chips').replaceChildren(...POS.map(p => {
   const l = el('label', 'chip');
@@ -838,10 +732,6 @@ function openEditor(id){
   $('#f-example').value = w ? w.example : '';
   document.querySelectorAll('#chips input').forEach(i => { i.checked = !!w && w.pos === i.value; });
   pendingAudio = w ? (w.audio || '') : '';
-  lookupSeq++;
-  $('#lookup-status').textContent = '';
-  $('#lookup-results').hidden = true;
-  $('#lookup-results').replaceChildren();
   $('#delete').hidden = !w;
   editorError('');
   dlg.showModal();
@@ -869,7 +759,6 @@ form.addEventListener('submit', e => {
   renderAll();
 });
 
-$('#lookup-btn').onclick = performLookup;
 $('#hear-btn').onclick = () => speakWord({ word:$('#f-word').value.trim(), audio:pendingAudio });
 $('#f-word').addEventListener('input', () => { pendingAudio = ''; });
 $('#cancel').onclick = () => dlg.close();

@@ -15,10 +15,6 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.core.view.WindowCompat
 import androidx.webkit.WebViewAssetLoader
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
 import java.util.Locale
 
 class MainActivity : Activity() {
@@ -86,14 +82,6 @@ class MainActivity : Activity() {
 
     fun speak(text: String) {
         if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "wordbook")
-    }
-
-    // Runs JS back in the page. Safe to call from any thread; swallowed if the
-    // activity is already gone (e.g. a lookup finishing after the user left the app).
-    fun runJs(script: String) {
-        runOnUiThread {
-            try { web.evaluateJavascript(script, null) } catch (e: Exception) { /* webview gone */ }
-        }
     }
 
     fun applyBars(color: Int, light: Boolean) {
@@ -171,35 +159,5 @@ class NativeBridge(private val activity: MainActivity) {
                 // bad color string, ignore
             }
         }
-    }
-
-    // Looks the word up from native code instead of the page's own fetch(). WebView's
-    // fetch() is a browser call and can be blocked by cross-origin rules that never
-    // apply to a plain server-to-server HTTP request made from Kotlin, so this is the
-    // reliable path for the in-app lookup. Runs on a background thread; delivers the
-    // result back into the page as window.onNativeLookupResult(status, body), where
-    // status is the HTTP status code, or -1 if the request never reached a server.
-    @JavascriptInterface
-    fun lookupWord(word: String) {
-        Thread {
-            var status = -1
-            var body = ""
-            try {
-                val url = URL("https://api.dictionaryapi.dev/api/v2/entries/en/" + URLEncoder.encode(word, "UTF-8"))
-                val conn = url.openConnection() as HttpURLConnection
-                conn.connectTimeout = 8000
-                conn.readTimeout = 8000
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("Accept", "application/json")
-                status = conn.responseCode
-                val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-                body = stream?.bufferedReader()?.use { it.readText() } ?: ""
-                conn.disconnect()
-            } catch (e: Exception) {
-                status = -1
-                body = e.message ?: "network error"
-            }
-            activity.runJs("window.onNativeLookupResult && window.onNativeLookupResult($status, ${JSONObject.quote(body)})")
-        }.start()
     }
 }

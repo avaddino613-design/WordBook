@@ -753,6 +753,33 @@ function applyCandidate(c){
   $('#f-example').value = c.example || '';
 }
 
+// Runs a dictionary lookup. Inside the Android app this hands off to native code
+// (NativeBridge.lookupWord), since a plain browser fetch() from the WebView's page
+// can be blocked by cross-origin rules that a native HTTP request never hits.
+// Outside the app (a plain browser, or a webtoapp-style wrapper) it uses fetch().
+let pendingNativeLookup = null;
+window.onNativeLookupResult = function (status, body) {
+  const resolve = pendingNativeLookup;
+  pendingNativeLookup = null;
+  if (resolve) resolve({ status: Number(status), body });
+};
+
+async function fetchDictionary(word){
+  if (window.WordbookNative && WordbookNative.lookupWord) {
+    const r = await new Promise(resolve => {
+      pendingNativeLookup = resolve;
+      WordbookNative.lookupWord(word);
+    });
+    if (r.status === 404) { const e = new Error('not found'); e.notFound = true; throw e; }
+    if (r.status < 200 || r.status >= 300) throw new Error('transport');
+    return JSON.parse(r.body);
+  }
+  const res = await fetch('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word));
+  if (res.status === 404) { const e = new Error('not found'); e.notFound = true; throw e; }
+  if (!res.ok) throw new Error('transport');
+  return await res.json();
+}
+
 async function performLookup(){
   const word = $('#f-word').value.trim();
   if (!word) { editorError('Type the word first.'); return; }
@@ -762,10 +789,7 @@ async function performLookup(){
   $('#lookup-results').hidden = true;
   $('#lookup-results').replaceChildren();
   try {
-    const res = await fetch('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word.toLowerCase()));
-    if (seq !== lookupSeq) return;
-    if (!res.ok) { $('#lookup-status').textContent = 'No results. You can fill it in yourself.'; return; }
-    const data = await res.json();
+    const data = await fetchDictionary(word.toLowerCase());
     if (seq !== lookupSeq) return;
 
     let audio = '';
@@ -789,7 +813,8 @@ async function performLookup(){
     applyCandidate(candidates[0]);
   } catch (e) {
     if (seq !== lookupSeq) return;
-    $('#lookup-status').textContent = 'Could not reach the dictionary. Check your connection.';
+    if (e && e.notFound) { $('#lookup-status').textContent = 'No results. You can fill it in yourself.'; }
+    else { $('#lookup-status').textContent = 'Could not reach the dictionary. Check your connection.'; }
   }
 }
 
